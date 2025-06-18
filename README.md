@@ -101,4 +101,36 @@ tasks:
 
 ## 许可证
 
-本项目使用开源许可证，具体请查看项目根目录的 LICENSE 文件。
+本项目使用 GPL-3.0 许可证。详见 [LICENSE](LICENSE) 文件。
+
+### 🔴 强制要求
+
+- **必须开源**：任何使用本项目代码的软件都必须开源
+- **相同许可证**：衍生作品必须使用 GPL-3.0 或兼容许可证
+- **提供源码**：分发二进制文件时必须同时提供源代码
+- **保留版权**：必须保留原始版权声明和许可证文本
+
+### 🚫 禁止行为
+
+- ❌ 将本项目代码用于闭源商业软件
+- ❌ 删除或修改许可证声明
+- ❌ 声称拥有本项目的专有权利
+- ❌ 在专有软件中静态链接本项目代码
+
+### ✅ 允许行为
+
+- ✅ 自由使用、修改、分发
+- ✅ 用于开源项目
+- ✅ 商业使用（但必须开源）
+- ✅ 通过网络 API 调用（无需开源调用方）
+
+## 规则源说明
+
+本项目目前聚合的规则来源于以下开源项目：
+
+- [anti-AD](https://github.com/privacy-protection-tools/anti-AD)
+- [AdRules](https://github.com/Cats-Team/AdRules)
+- [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)
+- [a-dove-is-dumb](https://github.com/ignaciocastro/a-dove-is-dumb)
+
+各规则源保持其原有许可证，本项目仅提供聚合和转换服务。
