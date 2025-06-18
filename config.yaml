@@ -1,0 +1,59 @@
+# 基础配置
+base:
+  # 按需修改
+  work_dir: "../tmp"
+  repo_dir: "./"
+  output_dir: "./out"
+  max_concurrent_downloads: 10
+  max_concurrent_tasks: 3
+  request_timeout: 30
+
+# Mihomo 配置
+mihomo:
+  api_url: "https://api.github.com/repos/MetaCubeX/mihomo/releases"
+  binary_pattern: "mihomo-linux-amd64-alpha"
+  file_extension: ".gz"
+
+# Git 配置
+git:
+  user_email: "actions@github.com"
+  user_name: "GitHub Actions"
+  branch: "main"
+  timezone: "Asia/Shanghai"
+
+# 任务配置
+tasks:
+  ad:
+    type: "domain"
+    format: "yaml"
+    sources: # 列表是有序的，会自动去重
+      - url: "https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-clash.yaml"
+        format_override: "yaml"
+        processors: ["remove_comments_and_empty"]
+      - url: "https://github.com/Cats-Team/AdRules/raw/refs/heads/main/adrules_domainset.txt"
+        format_override: "text"
+        processors: ["remove_comments_and_empty", "format_yaml_list"]
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/category-httpdns-cn@ads.list"
+        format_override: "text"
+        processors: ["remove_comments_and_empty", "format_yaml_list"]
+      - url: "https://github.com/ignaciocastro/a-dove-is-dumb/raw/refs/heads/main/pihole.txt"
+        format_override: "text"
+        processors: ["remove_comments_and_empty", "format_pihole"]
+
+  cn:
+    type: "domain"
+    format: "text"
+    sources:
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/cn.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/steam@cn.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/microsoft@cn.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/google@cn.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/win-update.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/private.list"
+
+  cnIP:
+    type: "ipcidr"
+    format: "text"
+    sources:
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/cn.list"
+      - url: "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/private.list"

@@ -1,0 +1,37 @@
+name: mrs
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 表达式生成 https://crontab.guru/
+    - cron: "45 19 * * *" #北京时间上午3点45分
+  push:
+    paths:
+      - ".github/workflows/mrs.yml"
+      - "start.py"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    # permissions:
+    #   actions: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行脚本
+        run: |
+          pip install -r ./requirements.txt
+          python ./start.py
+
+      - name: 推送更改
+        uses: ad-m/github-push-action@master
+        continue-on-error: true
+        with:
+          branch: main
+          force: true
+
+      - uses: igorjs/gh-actions-clean-workflow@v6
+        with:
+          runs_older_than: 0
+          runs_to_keep: 3 # 保留最近3次运行的工作流
