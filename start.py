@@ -124,6 +124,15 @@ class RulesetGenerator:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.error(f"配置文件不存在: {config_path}")
+            sys.exit(1)
+        except yaml.YAMLError as e:
+            logger.error(f"配置文件格式错误: {e}")
+            sys.exit(1)
+        except PermissionError:
+            logger.error(f"没有权限读取配置文件: {config_path}")
+            sys.exit(1)
         except Exception as e:
             logger.error(f"加载配置文件失败: {e}")
             sys.exit(1)
@@ -178,12 +187,15 @@ class RulesetGenerator:
             logger.info(f"从 {download_url} 下载Mihomo...")
             gz_path = self.work_dir / "mihomo.gz"
             
-            with requests.get(download_url, stream=True, 
-                            timeout=self.config['base']['request_timeout'] * 2) as r:
+            with requests.get(
+                download_url, stream=True, 
+                timeout=self.config['base']['request_timeout'] * 2
+            ) as r:
                 r.raise_for_status()
                 with open(gz_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                        if chunk:  # 过滤保持连接的空块
+                            f.write(chunk)
             
             with gzip.open(gz_path, 'rb') as f_in:
                 with open(mihomo_path, 'wb') as f_out:
@@ -192,28 +204,45 @@ class RulesetGenerator:
             gz_path.unlink()
             mihomo_path.chmod(0o755)
             
+        except requests.exceptions.RequestException as e:
+            logger.error(f"下载Mihomo失败，网络错误: {e}")
+            sys.exit(1)
+        except (OSError, IOError) as e:
+            logger.error(f"下载Mihomo失败，文件操作错误: {e}")
+            sys.exit(1)
         except Exception as e:
             logger.error(f"下载Mihomo失败: {e}")
             sys.exit(1)
     
-    def _find_download_url(self, releases: list, mihomo_config: dict) -> str:
+    def _find_download_url(self, releases: list, mihomo_config: dict) -> Optional[str]:
         """查找下载链接"""
         for release in releases:
-            if "Prerelease-Alpha" in release.get("tag_name", ""):
-                for asset in release.get("assets", []):
-                    name = asset.get("name", "")
-                    if (mihomo_config['binary_pattern'] in name and 
-                        name.endswith(mihomo_config['file_extension'])):
-                        return asset.get("browser_download_url")
-        return ""
+            tag_name = release.get("tag_name", "")
+            if "Prerelease-Alpha" not in tag_name:
+                continue
+                
+            for asset in release.get("assets", []):
+                asset_name = asset.get("name", "")
+                if (mihomo_config['binary_pattern'] in asset_name and 
+                    asset_name.endswith(mihomo_config['file_extension'])):
+                    return asset.get("browser_download_url")
+        
+        return None
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, max=10))
-    def _download_and_process_source(self, source: SourceConfig, index: int) -> Tuple[int, str]:
+    @retry(
+        stop=stop_after_attempt(3), 
+        wait=wait_exponential(multiplier=1, max=10)
+    )
+    def _download_and_process_source(
+        self, source: SourceConfig, index: int
+    ) -> Tuple[int, str]:
         """下载并处理单个源，失败时重试"""
         try:
-            logger.info(f"下载: {source.url}")
-            response = self.session.get(source.url,
-                                        timeout=self.config['base']['request_timeout'])
+            logger.info(f"下载源 #{index}: {source.url}")
+            response = self.session.get(
+                source.url,
+                timeout=self.config['base']['request_timeout']
+            )
             response.raise_for_status()
             content = response.text
             
@@ -222,9 +251,11 @@ class RulesetGenerator:
             for processor_name in processors:
                 if processor_name in self.processors:
                     content = self.processors[processor_name](content)
+                else:
+                    logger.warning(f"未知的处理器: {processor_name}")
             
             # 确保以换行结束
-            if not content.endswith('\n'):
+            if content and not content.endswith('\n'):
                 content += '\n'
             
             file_size = len(content.encode('utf-8'))
@@ -235,6 +266,12 @@ class RulesetGenerator:
             
             return index, content
             
+        except requests.exceptions.Timeout:
+            logger.warning(f"下载超时: {source.url}")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"下载失败: {source.url}, 网络错误: {e}")
+            raise
         except Exception as e:
             logger.warning(f"处理源 {source.url} 时出错: {e}")
             return index, ""
@@ -258,19 +295,27 @@ class RulesetGenerator:
                 index, content = future.result()
                 results[index] = content
         
-        # 合并内容
-        combined_content = "".join(results[i] for i in sorted(results.keys()))
+        # 合并内容，过滤空内容
+        combined_content = "".join(
+            results[i] 
+            for i in sorted(results.keys()) 
+            if results[i].strip()
+        )
         
         # 处理文件格式
         temp_source_path = self.work_dir / f"{name}.{task_config.format}"
         final_source_path = self.output_dir / f"{name}.{task_config.format}"
         final_mrs_path = self.output_dir / f"{name}.mrs"
         
-        self._write_processed_content(combined_content, temp_source_path, task_config.format)
+        self._write_processed_content(
+            combined_content, temp_source_path, task_config.format
+        )
         
         # 转换为MRS格式
-        if self._convert_to_mrs(name, task_config.type, task_config.format, 
-                               temp_source_path, final_source_path, final_mrs_path):
+        if self._convert_to_mrs(
+            name, task_config.type, task_config.format, 
+            temp_source_path, final_source_path, final_mrs_path
+        ):
             logger.info(f"{name} 规则集处理完成")
             return [final_source_path, final_mrs_path]
         
@@ -278,33 +323,63 @@ class RulesetGenerator:
     
     def _write_processed_content(self, content: str, temp_path: Path, format_type: str):
         """写入处理后的内容"""
-        lines = content.splitlines()
-        if not lines:
+        if not content.strip():
             raise ValueError("内容为空")
         
-        if format_type == "yaml":
-            header = lines[0]
-            body_lines = sorted(list(set(filter(None, lines[1:]))))
-            final_content = header + "\n" + "\n".join(body_lines)
-        else:
-            unique_sorted_lines = sorted(list(set(filter(None, lines))))
-            final_content = "\n".join(unique_sorted_lines)
+        lines = content.splitlines()
         
-        temp_path.write_text(final_content, encoding='utf-8')
+        if format_type == "yaml":
+            if not lines:
+                raise ValueError("YAML内容不能为空")
+            header = lines[0]
+            unique_lines = sorted(
+                set(line for line in lines[1:] if line.strip())
+            )
+            final_content = f"{header}\n" + "\n".join(unique_lines)
+        else:
+            unique_lines = sorted(
+                set(line for line in lines if line.strip())
+            )
+            final_content = "\n".join(unique_lines)
+        
+        # 原子写入，避免写入过程中的文件损坏
+        temp_file = temp_path.with_suffix(temp_path.suffix + '.tmp')
+        try:
+            temp_file.write_text(final_content, encoding='utf-8')
+            temp_file.replace(temp_path)
+        except Exception:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise
     
-    def _convert_to_mrs(self, name: str, rule_type: str, format_type: str,
-                       temp_path: Path, final_source_path: Path, final_mrs_path: Path) -> bool:
+    def _convert_to_mrs(
+        self, name: str, rule_type: str, format_type: str,
+        temp_path: Path, final_source_path: Path, final_mrs_path: Path
+    ) -> bool:
         """转换为MRS格式"""
         try:
             mihomo_executable = self.work_dir / "mihomo"
+            if not mihomo_executable.exists():
+                logger.error("Mihomo工具不存在")
+                return False
+                
             temp_mrs_path = self.work_dir / f"{name}.mrs"
             
             logger.debug(f"转换 {temp_path} 到MRS格式...")
             
-            cmd = [str(mihomo_executable), "convert-ruleset", rule_type, 
-                   format_type, str(temp_path), str(temp_mrs_path)]
+            cmd = [
+                str(mihomo_executable), "convert-ruleset", rule_type, 
+                format_type, str(temp_path), str(temp_mrs_path)
+            ]
             
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.debug(f"转换成功: {result.stdout}")
+            
+            # 验证输出文件
+            if (not temp_mrs_path.exists() or 
+                temp_mrs_path.stat().st_size == 0):
+                logger.error("转换后的MRS文件不存在或为空")
+                return False
             
             shutil.move(str(temp_path), str(final_source_path))
             shutil.move(str(temp_mrs_path), str(final_mrs_path))
@@ -313,6 +388,9 @@ class RulesetGenerator:
             
         except subprocess.CalledProcessError as e:
             logger.error(f"Mihomo转换失败: {e.stderr}")
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"文件操作错误: {e}")
             return False
         except Exception as e:
             logger.error(f"转换过程中发生错误: {e}")
@@ -332,17 +410,25 @@ class RulesetGenerator:
             commit_message = f"{commit_time} 更新mrs规则"
             
             commands = [
-                ["git", "config", "--local", "user.email", git_config['user_email']],
-                ["git", "config", "--local", "user.name", git_config['user_name']],
+                ["git", "config", "--local", "user.email", 
+                 git_config['user_email']],
+                ["git", "config", "--local", "user.name", 
+                 git_config['user_name']],
                 ["git", "pull", "origin", git_config['branch']],
                 ["git", "add", f"{base_config['output_dir']}/*"],
             ]
             
             for cmd in commands:
-                subprocess.run(cmd, cwd=self.repo_dir, check=True)
+                result = subprocess.run(
+                    cmd, cwd=self.repo_dir, check=True, 
+                    capture_output=True, text=True
+                )
+                logger.debug(f"Git命令执行成功: {' '.join(cmd)}")
             
-            result = subprocess.run(["git", "commit", "-m", commit_message], 
-                                  cwd=self.repo_dir, capture_output=True, text=True)
+            result = subprocess.run(
+                ["git", "commit", "-m", commit_message], 
+                cwd=self.repo_dir, capture_output=True, text=True
+            )
             
             if result.returncode != 0:
                 if "nothing to commit" in result.stdout:
@@ -352,6 +438,8 @@ class RulesetGenerator:
             else:
                 logger.info("提交完成")
                 
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Git命令执行失败: {e.stderr}")
         except Exception as e:
             logger.error(f"提交时发生错误: {e}")
     
@@ -365,9 +453,14 @@ class RulesetGenerator:
         
         # 并行处理任务
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            task_configs = {name: TaskConfig(**config) for name, config in tasks.items()}
-            futures = {executor.submit(self.process_task, name, config): name 
-                      for name, config in task_configs.items()}
+            task_configs = {
+                name: TaskConfig(**config) 
+                for name, config in tasks.items()
+            }
+            futures = {
+                executor.submit(self.process_task, name, config): name 
+                for name, config in task_configs.items()
+            }
             
             for future in as_completed(futures):
                 task_name = futures[future]
@@ -375,7 +468,9 @@ class RulesetGenerator:
                 if generated_files:
                     all_generated_files.extend(generated_files)
                 else:
-                    logger.warning(f"任务 {task_name} 未能成功生成文件")
+                    logger.warning(
+                        f"任务 {task_name} 未能成功生成文件"
+                    )
         
         # 文件检查
         if self._validate_generated_files(all_generated_files):
@@ -396,9 +491,14 @@ class RulesetGenerator:
         all_ok = True
         for file_path in files:
             if file_path.exists() and file_path.stat().st_size > 0:
-                logger.info(f"✅ 文件检查成功: {file_path} (大小: {file_path.stat().st_size} 字节)")
+                file_size = file_path.stat().st_size
+                logger.info(
+                    f"✅ 文件检查成功: {file_path} (大小: {file_size} 字节)"
+                )
             else:
-                logger.error(f"❌ 文件检查失败: {file_path} 不存在或为空")
+                logger.error(
+                    f"❌ 文件检查失败: {file_path} 不存在或为空"
+                )
                 all_ok = False
         
         return all_ok
@@ -416,8 +516,13 @@ def main(config, log_level):
     """MRS规则集生成器"""
     # 配置日志
     logger.remove()
-    logger.add(sys.stdout, level=log_level, 
-               format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
+    logger.add(
+        sys.stdout, level=log_level, 
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+               "<level>{level: <8}</level> | <cyan>{name}</cyan>:"
+               "<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+               "<level>{message}</level>"
+    )
     
     config_path = Path(config)
     if not config_path.is_absolute():
