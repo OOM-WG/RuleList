@@ -1,0 +1,35 @@
+name: mrs
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 表达式生成 https://crontab.guru/
+    - cron: "45 19 * * *" #北京时间上午3点45分
+  push:
+    paths:
+      - ".github/workflows/mrs.yml"
+      - "start.sh"
+
+jobs:
+  update:
+    runs-on: ubuntu-slim
+    permissions:
+      actions: write
+      contents: write
+    env:
+      # 将 Token 传递给脚本，推送时需要用
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行脚本
+        run: |
+          export TZ='Asia/Shanghai'
+          bash ./start.sh
+
+      - uses: igorjs/gh-actions-clean-workflow@v6
+        with:
+          runs_older_than: 0
+          runs_to_keep: 3 # 保留最近3次运行的工作流

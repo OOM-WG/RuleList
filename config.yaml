@@ -1,0 +1,43 @@
+# 基础配置
+work_dir: "./tmp"
+output_dir: "./out"
+
+# Mihomo 配置
+mihomo:
+  api_url: "https://api.github.com/repos/MetaCubeX/mihomo/releases"
+  start_with: "mihomo-linux-amd64-alpha"
+  end_with: ".gz"
+
+# Git 配置
+git:
+  user_email: "actions@github.com"
+  user_name: "GitHub Actions"
+  release_branch: "release"
+  max_history: 7
+  timezone: "Asia/Shanghai"
+
+# 任务配置
+tasks:
+  ad:
+    format: "mrs"
+    src: # 会自动去重
+      - "https://github.com/privacy-protection-tools/anti-AD/raw/refs/heads/master/anti-ad-clash.yaml"
+      - "https://github.com/Cats-Team/AdRules/raw/refs/heads/main/adrules_domainset.txt"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/category-httpdns-cn@ads.list"
+      - "https://github.com/ignaciocastro/a-dove-is-dumb/raw/refs/heads/main/pihole.txt"
+
+  cn:
+    format: "mrs"
+    src:
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/cn.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/steam@cn.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/microsoft@cn.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/google@cn.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/win-update.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/private.list"
+
+  cnIP:
+    format: "mrs"
+    src:
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/cn.list"
+      - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/private.list"
