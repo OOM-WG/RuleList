@@ -96,7 +96,7 @@ tasks:
       domains.append("+.wns.windows.com")
       domains.append("+.100.in-addr.arpa")
       domains.append("+.download.prss.microsoft.com")
-      
+
       print(f"  -> 清洗完成，处理后数量: {len(domains)}")
 
   cnIP:

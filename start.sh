@@ -107,7 +107,13 @@ for task in $task_names; do
     urls=$(yq -r ".tasks.$task.src[]" "$config_file")
 
     # 如果 YAML 中没有 custom_script，yq 可能会返回 null，这里做处理
-    custom_script_content=$(yq -r ".tasks.$task.custom_script // empty" "$config_file")
+    custom_script_content=$(yq -r ".tasks.$task.custom_script" "$config_file")
+    
+    # 在 Bash 中判断：如果是 null 则视为空字符串
+    if [ "$custom_script_content" == "null" ]; then
+        custom_script_content=""
+    fi
+    
     export CUSTOM_SCRIPT="$custom_script_content"
 
     for url in $urls; do
