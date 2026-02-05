@@ -25,6 +25,44 @@ tasks:
       - "https://github.com/Cats-Team/AdRules/raw/refs/heads/main/adrules_domainset.txt"
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/category-httpdns-cn@ads.list"
       - "https://github.com/ignaciocastro/a-dove-is-dumb/raw/refs/heads/main/pihole.txt"
+    custom_script: |
+      print(f"  -> 执行自定义 AD 清洗，处理前数量: {len(domains)}")
+
+      # 定义需要移除的后缀，及其对应的替换规则 (None 代表只删不补)
+      # 格式: ".后缀": "替换内容"
+      rules_map = {
+          ".xx.fbcdn.net.iberostar.com": "+.xx.fbcdn.net.iberostar.com",
+          ".wns.windows.com":            "+.wns.windows.com",
+          ".p2l.info":                   "+.p2l.info",
+          ".wo.com.cn":                  None,  # 只移除规则(即放行)，不添加泛屏蔽
+          ".apps.iocnt.de":              "+.apps.iocnt.de" # 用于配合下面的正则判断
+      }
+      new_domains = []
+
+      # 单次循环处理所有逻辑 (性能大大提升)
+      for d in domains:
+          skip = False
+          
+          # 1. 特殊正则逻辑: 处理 data-xxx.apps.iocnt.de
+          if d.startswith("+.data-") and d.endswith(".apps.iocnt.de"):
+              skip = True
+          
+          # 2. 批量后缀匹配
+          if not skip:
+              for suffix in rules_map:
+                  if d.endswith(suffix):
+                      skip = True
+                      break
+          
+          # 3. 如果没被标记跳过，则保留
+          if not skip:
+              new_domains.append(d)
+      # 4. 统一补回泛域名规则
+      for replacement in rules_map.values():
+          if replacement:
+              new_domains.append(replacement)
+      domains = new_domains
+      print(f"  -> 清洗完成，处理后数量: {len(domains)}")
 
   cn:
     format: "mrs"
@@ -35,6 +73,31 @@ tasks:
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/google@cn.list"
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/win-update.list"
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/private.list"
+    # 自定义清洗脚本
+    # 在这里编写 Python 代码，变量名 'domains' 是一个列表，包含了当前所有的域名行
+    custom_script: |
+      print(f"  -> 执行自定义清洗，处理前数量: {len(domains)}")
+      # 简单的过滤列表 (只删不补的放在这里)
+      # 复杂的逻辑或者需要补回的建议用上面的结构，或者保持现在的写法
+
+      # 过滤包含特定字符串的行
+      domains = [d for d in domains if "dsp.mp.microsoft.com" not in d]
+
+      # 过滤后缀
+      filter_suffixes = (
+          ".wns.windows.com",
+          ".100.in-addr.arpa",
+          ".download.prss.microsoft.com"
+      )
+      # endswith 实际上支持传入元组 (tuple)，一次匹配多个
+      domains = [d for d in domains if not d.endswith(filter_suffixes)]
+      # 批量补回
+      domains.append("+.do.dsp.mp.microsoft.com")
+      domains.append("+.wns.windows.com")
+      domains.append("+.100.in-addr.arpa")
+      domains.append("+.download.prss.microsoft.com")
+      
+      print(f"  -> 清洗完成，处理后数量: {len(domains)}")
 
   cnIP:
     format: "mrs"

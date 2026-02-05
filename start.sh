@@ -106,6 +106,10 @@ for task in $task_names; do
     # 获取该 task 的所有下载链接
     urls=$(yq -r ".tasks.$task.src[]" "$config_file")
 
+    # 如果 YAML 中没有 custom_script，yq 可能会返回 null，这里做处理
+    custom_script_content=$(yq -r ".tasks.$task.custom_script // empty" "$config_file")
+    export CUSTOM_SCRIPT="$custom_script_content"
+
     for url in $urls; do
         echo "正在下载: $url"
         filename=$(basename "$url")
@@ -215,31 +219,32 @@ EOF
 import sys
 import re
 import os
-# 获取 Bash 传入的文件路径
+from collections import defaultdict
 input_path = sys.argv[1]
 output_path = sys.argv[2]
 print(f"Python (域名模式) 正在读取: {input_path}")
+def get_clean_domain(domain_str):
+    # 去除 +. *. . 等前缀，只保留纯域名用于逻辑判断
+    return re.sub(r'^[\+\*\.]+', '', domain_str)
 try:
     # 1. 读取文件
-    lines = []
+    raw_lines = []
     with open(input_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if line:
-                lines.append(line)
+                raw_lines.append(line)
     
-    # 2. 辅助函数：获取纯域名 (去除行首的 *. +. . 等)
-    def get_clean_domain(domain_str):
-        return re.sub(r'^[\+\*\.]+', '', domain_str)
-    
-    # 3. 排序：按“纯域名”长度排序，短的在前 (确保父域名排在子域名之前)
-    lines.sort() # 先字典序排序，确保一致性
-    lines.sort(key=lambda x: len(get_clean_domain(x)))
-    
-    # 4. 智能去重逻辑
+    # 2. 基础去重与排序 (父子域名逻辑)
+    # 先按长度排序
+    raw_lines.sort()
+    raw_lines.sort(key=lambda x: len(get_clean_domain(x)))
+
+    # 4. 智能去重逻辑    
     roots = set()
-    result = []
-    for line in lines:
+    domains = [] # 这个变量将暴露给自定义脚本使用
+    
+    for line in raw_lines:
         clean_domain = get_clean_domain(line)
         parts = clean_domain.split('.')
         is_redundant = False
@@ -256,13 +261,50 @@ try:
                     break
         
         if not is_redundant:
-            result.append(line)
+            domains.append(line)
             roots.add(clean_domain)
+    # 执行 YAML 中的自定义脚本
+    custom_code = os.environ.get('CUSTOM_SCRIPT', '')
+    if custom_code and custom_code.strip() != "":
+        try:
+            # 使用 exec 执行字符串代码，传入 domains 变量
+            # 用户在 YAML 中可以直接操作 domains 列表
+            exec_globals = {}
+            exec_locals = {'domains': domains, 're': re}
+            exec(custom_code, exec_globals, exec_locals)
             
-    # 5. 写入文件   
+            #以此取回修改后的列表
+            domains = exec_locals['domains']
+            print(f"  -> 自定义脚本执行完毕")
+        except Exception as e:
+            print(f"  -> [警告] 自定义脚本执行失败: {e}")
+            # 即使脚本失败，也继续往下走，不要中断整个流程
+    # 泛滥子域检测警告
+    # 逻辑：取域名的后缀（去掉第一段），统计出现次数
+    suffix_counter = defaultdict(int)
+    for line in domains:
+        clean = get_clean_domain(line)
+        parts = clean.split('.')
+
+        # 如果域名层级少于 4，跳过检查
+        if len(parts) < 4:
+            continue
+        # 获取父级域名（去掉最左边的一段）
+        suffix = ".".join(parts[1:])
+        suffix_counter[suffix] += 1
+    
+    warned = False
+    sorted_suffixes = sorted(suffix_counter.items(), key=lambda x: x[1], reverse=True)
+    for suffix, count in sorted_suffixes:
+        if count >= 17: # 阈值可调整
+            if not warned:
+                print("  -> [注意] 检测到以下后缀包含大量子域名:")
+                warned = True
+            print(f"     Suffix: .{suffix} (包含 {count} 个条目)")
+    # 5. 写入文件
     print(f"Python (域名模式) 正在写入: {output_path}")
     with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write("\n".join(result))
+        f.write("\n".join(domains))
         f.write("\n")
 except FileNotFoundError:
     print(f"错误: 找不到文件 {input_path}")
@@ -297,8 +339,10 @@ release_branch=$(yq -r '.git.release_branch' "$config_file")
 max_history=$(yq -r '.git.max_history' "$config_file")
 echo "开始部署到分支: $release_branch"
 # 配置 Git 身份
-git config --global user.name "$(yq -r '.git.user_name' "$config_file")"
-git config --global user.email "$(yq -r '.git.user_email' "$config_file")"
+if [ -n "$GITHUB_TOKEN" ]; then
+    git config --global user.name "$(yq -r '.git.user_name' "$config_file")"
+    git config --global user.email "$(yq -r '.git.user_email' "$config_file")"
+fi
 # 这里的逻辑是：不在当前目录下操作，而是克隆一个干净的 release 分支到 temp_repo 目录
 temp_repo="$work_dir/temp_repo"
 rm -rf "$temp_repo" || true
