@@ -10,8 +10,8 @@ mihomo:
 
 # Git 配置
 git:
-  user_email: "actions@github.com"
-  user_name: "GitHub Actions"
+  user_email: "259484229+oom-wg[bot]@users.noreply.github.com"
+  user_name: "oom-wg[bot]"
   release_branch: "release"
   max_history: 7
   timezone: "Asia/Shanghai"
