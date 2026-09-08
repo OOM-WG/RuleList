@@ -90,6 +90,56 @@ fi
 chmod +x "$work_dir/mihomo"
 echo "Mihomo 已就绪: $work_dir/mihomo"
 
+# ---------- 准备 sing-box（用于生成 .srs 格式，仅当有任务需要时）----------
+SING_BOX_BIN=""
+if yq -r '.tasks[].format' "$config_file" | grep -q "srs"; then
+    if [ -n "$SING_BOX_PATH" ] && [ -x "$SING_BOX_PATH" ]; then
+        # 本地测试可直接指定 SING_BOX_PATH=/path/to/sing-box 跳过下载
+        SING_BOX_BIN="$SING_BOX_PATH"
+        echo "使用本地 sing-box: $SING_BOX_BIN"
+    else
+        sb_api_url=$(yq -r '.singbox.api_url' "$config_file")
+        sb_start=$(yq -r '.singbox.start_with' "$config_file")
+        sb_end=$(yq -r '.singbox.end_with' "$config_file")
+        echo "正在获取 sing-box API 信息..."
+        sb_api_response=$(curl -sL -f -H "$AUTH_HEADER" "$sb_api_url")
+        if [ $? -ne 0 ] || [ -z "$sb_api_response" ]; then
+            echo "错误: 无法连接 sing-box API ($sb_api_url)。"
+            exit 1
+        fi
+        sb_asset=$(echo "$sb_api_response" | jq -c ".[] | .assets[] | select(.name | startswith(\"$sb_start\") and endswith(\"$sb_end\"))" | head -n 1)
+        if [ -z "$sb_asset" ] || [ "$sb_asset" == "null" ]; then
+            echo "错误: 未找到符合条件的 sing-box 资源 ($sb_start ... $sb_end)。"
+            exit 1
+        fi
+        sb_url=$(echo "$sb_asset" | jq -r '.browser_download_url')
+        echo "下载 sing-box: $sb_url"
+        wget -q -O "$work_dir/singbox.tar.gz" "$sb_url"
+
+        # digest 可能为 null（旧 release），为空则跳过校验
+        sb_digest=$(echo "$sb_asset" | jq -r '.digest // ""' | cut -d ':' -f 2)
+        if [ -n "$sb_digest" ]; then
+            sb_actual=$(sha256sum "$work_dir/singbox.tar.gz" | awk '{print $1}')
+            if [ "$sb_actual" != "$sb_digest" ]; then
+                echo "错误: sing-box 文件校验失败！"
+                echo "预期: $sb_digest"
+                echo "实际: $sb_actual"
+                exit 1
+            fi
+            echo "sing-box 文件校验成功。"
+        fi
+
+        tar -xzf "$work_dir/singbox.tar.gz" -C "$work_dir"
+        SING_BOX_BIN=$(find "$work_dir" -type f -name "sing-box" | head -n 1)
+        if [ -z "$SING_BOX_BIN" ]; then
+            echo "错误: 解压后未找到 sing-box 二进制。"
+            exit 1
+        fi
+        chmod +x "$SING_BOX_BIN"
+        echo "sing-box 已就绪: $SING_BOX_BIN ($("$SING_BOX_BIN" version | head -n 1))"
+    fi
+fi
+
 output_dir=$(yq -r '.output_dir' "$config_file")
 rm -rf "$output_dir" || true
 mkdir -p "$output_dir"
@@ -328,13 +378,107 @@ EOF
     fi
 
 
-    need_mrs=$(yq -r ".tasks.$task.format" "$config_file" | grep -q "mrs" && echo "true" || echo "false")
-    if [ "$need_mrs" == "true" ]; then
-        echo "转换为 mrs 格式"
-        $work_dir/mihomo convert-ruleset $behavior text "$output_file" "$output_dir/${task}.mrs"
-        echo "生成文件: ${task}.mrs (文件大小: $(du -h "$output_dir/${task}.mrs" | awk '{print $1}'))"
-    fi
-    rm -f "$work_dir/tmp.txt"
+    # 按任务配置的 format 列表（空格分隔，如 "mrs srs"）依次生成
+    formats=$(yq -r ".tasks.$task.format // \"mrs\"" "$config_file" | tr ' ' '\n' | sed '/^$/d')
+
+    for fmt in $formats; do
+        if [ "$fmt" == "mrs" ]; then
+            echo "转换为 mrs 格式"
+            $work_dir/mihomo convert-ruleset $behavior text "$output_file" "$output_dir/${task}.mrs"
+            echo "生成文件: ${task}.mrs (文件大小: $(du -h "$output_dir/${task}.mrs" | awk '{print $1}'))"
+        elif [ "$fmt" == "srs" ]; then
+            if [ -z "$SING_BOX_BIN" ]; then
+                echo "错误: 任务 $task 需要 srs 格式，但 sing-box 未就绪。"
+                exit 1
+            fi
+            echo "转换为 srs 格式"
+            # 1. txt -> sing-box source JSON
+            python3 - "$output_file" "$behavior" "$work_dir/${task}.srs.json" <<-'EOF'
+import sys, json, re, ipaddress
+input_path, behavior, output_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# 合法域名：多级域名，或单标签（如 geosite 中的 anquan/alipay 特殊条目，
+# sing-box 的 domain_suffix 支持单标签匹配）
+DOMAIN_RE = re.compile(r'^[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?(?:\.[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?)*$')
+
+try:
+    if behavior == 'domain':
+        exact, suffix = [], []
+        for line in open(input_path, encoding='utf-8'):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            # 域名模式里跳过纯 IP 行（IP 走 ipcidr 任务）
+            try:
+                ipaddress.ip_address(line.lstrip('+.*'))
+                continue
+            except ValueError:
+                pass
+            # +.x / *.x -> domain_suffix（mihomo 的 *. 是单级通配，这里按
+            # sing-box 语义放宽为任意层级后缀，与绝大多数列表的实际意图一致）
+            if line.startswith(('+.', '*.')):
+                d = line[2:]
+                if DOMAIN_RE.match(d):
+                    suffix.append(d)
+                else:
+                    print(f'  -> [srs] 跳过无效域名: {line}')
+            else:
+                if DOMAIN_RE.match(line):
+                    exact.append(line)
+                else:
+                    print(f'  -> [srs] 跳过无效域名: {line}')
+        rule = {}
+        if exact:
+            rule['domain'] = exact
+        if suffix:
+            rule['domain_suffix'] = suffix
+        if not rule:
+            print('错误: 没有任何有效域名，无法生成 srs')
+            sys.exit(1)
+        data = {'version': 3, 'rules': [rule]}
+    elif behavior == 'ipcidr':
+        nets = []
+        for line in open(input_path, encoding='utf-8'):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                # strict=False 自动规范化（如 1.2.3.4/24 -> 1.2.3.0/24）
+                nets.append(str(ipaddress.ip_network(line, strict=False)))
+            except ValueError:
+                print(f'  -> [srs] 跳过无效网段: {line}')
+        if not nets:
+            print('错误: 没有任何有效网段，无法生成 srs')
+            sys.exit(1)
+        data = {'version': 3, 'rules': [{'ip_cidr': nets}]}
+    else:
+        print(f'错误: 未知 behavior: {behavior}')
+        sys.exit(1)
+
+    with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+    total = sum(len(r.get(k, [])) for r in data['rules'] for k in r)
+    print(f'  -> source JSON 已生成: {output_path} ({total} 条目)')
+except FileNotFoundError:
+    print(f'错误: 找不到文件 {input_path}')
+    sys.exit(1)
+EOF
+            if [ $? -ne 0 ]; then
+                echo "错误：srs source JSON 生成失败"
+                exit 1
+            fi
+            # 2. source JSON -> 二进制 srs
+            "$SING_BOX_BIN" rule-set compile "$work_dir/${task}.srs.json" -o "$output_dir/${task}.srs"
+            if [ $? -ne 0 ]; then
+                echo "错误：srs 编译失败"
+                exit 1
+            fi
+            echo "生成文件: ${task}.srs (文件大小: $(du -h "$output_dir/${task}.srs" | awk '{print $1}'))"
+        else
+            echo "警告: 未知格式 $fmt，跳过。"
+        fi
+    done
+    rm -f "$work_dir/tmp.txt" "$work_dir/${task}.srs.json"
 done
 
 echo "---------------------------------------"

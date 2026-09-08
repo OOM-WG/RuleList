@@ -14,7 +14,7 @@
 
 ## 输出文件
 
-每个任务会在 **`release`分支** 里生成 纯文本 和 mrs (mihomo)格式的文件  
+每个任务会在 **`release`分支** 里生成 纯文本、mrs (mihomo) 和 srs (sing-box) 格式的文件  
 
 ## 当前配置的规则集
 

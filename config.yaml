@@ -8,6 +8,12 @@ mihomo:
   start_with: "mihomo-linux-amd64-alpha"
   end_with: ".gz"
 
+# sing-box 配置（用于生成 .srs 格式规则集）
+singbox:
+  api_url: "https://api.github.com/repos/SagerNet/sing-box/releases"
+  start_with: "sing-box-"
+  end_with: "-linux-amd64.tar.gz"
+
 # Git 配置
 git:
   user_email: "259484229+oom-wg[bot]@users.noreply.github.com"
@@ -19,7 +25,7 @@ git:
 # 任务配置
 tasks:
   ad:
-    format: "mrs"
+    format: "mrs srs"
     src: # 会自动去重
       - "https://github.com/privacy-protection-tools/anti-AD/raw/refs/heads/master/anti-ad-clash.yaml"
       - "https://github.com/Cats-Team/AdRules/raw/refs/heads/main/adrules_domainset.txt"
@@ -65,7 +71,7 @@ tasks:
       print(f"  -> 清洗完成，处理后数量: {len(domains)}")
 
   cn:
-    format: "mrs"
+    format: "mrs srs"
     src:
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/cn.list"
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/steam@cn.list"
@@ -100,7 +106,7 @@ tasks:
       print(f"  -> 清洗完成，处理后数量: {len(domains)}")
 
   cnIP:
-    format: "mrs"
+    format: "mrs srs"
     src:
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/cn.list"
       - "https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/private.list"
