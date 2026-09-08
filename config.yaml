@@ -40,6 +40,8 @@ tasks:
           ".xx.fbcdn.net.iberostar.com": "+.xx.fbcdn.net.iberostar.com",
           ".wns.windows.com":            "+.wns.windows.com",
           ".p2l.info":                   "+.p2l.info",
+          ".net.mydays.de":              "+.net.mydays.de",
+          ".net.anwalt.de":              "+.net.anwalt.de",
           ".wo.com.cn":                  None,  # 只移除规则(即放行)，不添加泛屏蔽
           ".apps.iocnt.de":              "+.apps.iocnt.de" # 用于配合下面的正则判断
       }
